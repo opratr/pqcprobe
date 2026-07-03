@@ -1,8 +1,12 @@
 # python
 import argparse
+import ipaddress
 import json
+import re
+import shutil
 import socket
 import select
+import subprocess
 import sys
 import time
 import concurrent.futures
@@ -34,6 +38,27 @@ COMMON_TLS13_CIPHERS = [
     "TLS_AES_256_GCM_SHA384",
     "TLS_AES_128_GCM_SHA256",
     "TLS_CHACHA20_POLY1305_SHA256",
+]
+
+# Post-quantum hybrid key-exchange groups (OpenSSL 3.5+ names). Support for any
+# of these means the session key is agreed with a quantum-resistant KEM, which
+# mitigates "harvest-now, decrypt-later" (HNDL) risk.
+PQC_HYBRID_GROUPS = [
+    "X25519MLKEM768",
+    "SecP256r1MLKEM768",
+    "X448MLKEM1024",
+    "SecP384r1MLKEM1024",
+]
+
+# Classical groups probed for comparison / baseline.
+CLASSICAL_GROUPS = [
+    "x25519",
+    "x448",
+    "secp256r1",
+    "secp384r1",
+    "secp521r1",
+    "ffdhe2048",
+    "ffdhe3072",
 ]
 
 # Helper to parse targets
@@ -281,6 +306,17 @@ def connect_once(host, port, ctx, timeout):
     # certificate actually identifies the host we asked for, so we do it here.
     hostname_match = match_hostname(cert, host) if cert else None
 
+    # Negotiated key-exchange group (e.g. X25519MLKEM768 vs. classical x25519).
+    # This is the primary post-quantum signal: it tells us whether the session
+    # key was agreed with a quantum-resistant KEM.
+    group = None
+    try:
+        getter = getattr(conn, 'get_group_name', None)
+        if callable(getter):
+            group = getter() or None
+    except Exception:
+        group = None
+
     # Close
     try:
         conn.shutdown()
@@ -300,6 +336,7 @@ def connect_once(host, port, ctx, timeout):
         'tls_version': tls_version,
         'cipher': cipher,
         'alpn': alpn,
+        'group': group,
         'certificate': cert,
         'hostname_match': hostname_match,
     }
@@ -650,6 +687,133 @@ def dedupe_by_name(items):
             out.append(it)
     return out
 
+
+def _is_ip_literal(host):
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+# A group name denotes post-quantum key exchange if it references an ML-KEM
+# (or legacy Kyber) component, e.g. "X25519MLKEM768".
+def _is_pqc_group(group):
+    if not group:
+        return False
+    g = group.lower()
+    return 'mlkem' in g or 'kyber' in g
+
+
+# Interpret the combined stdout/stderr of `openssl s_client -groups <group>`.
+# Kept separate from the subprocess call so it can be unit tested with captured
+# sample output.
+def classify_group_output(group, output):
+    text = output or ""
+    lower = text.lower()
+    # openssl rejects the group before connecting when the local build doesn't
+    # know it (e.g. LibreSSL, or OpenSSL < 3.5 for the ML-KEM hybrids).
+    if "ssl_conf_cmd(-groups" in lower and "failed" in lower:
+        return {
+            'group': group,
+            'status': 'unknown_locally',
+            'detail': 'local openssl does not recognize this group',
+        }
+
+    # The reliable success signal across openssl versions is a real negotiated
+    # cipher. The "Negotiated TLS1.3 group:" line is only printed for some
+    # builds/groups, so it confirms the group name when present but cannot be
+    # relied on as the sole indicator (classical groups often omit it).
+    cipher_m = re.search(r"Cipher is (\S+)", text)
+    negotiated_cipher = cipher_m.group(1) if cipher_m else None
+    group_m = re.search(r"Negotiated TLS1\.3 group:\s*(\S+)", text)
+    negotiated_group = group_m.group(1) if group_m else None
+
+    handshake_ok = bool(negotiated_cipher) and negotiated_cipher != "(NONE)"
+    if handshake_ok and negotiated_group != "<NULL>":
+        # We forced a single group, so a successful handshake used it.
+        return {'group': group, 'status': 'supported',
+                'negotiated': negotiated_group or group}
+
+    if (negotiated_cipher == "(NONE)" or negotiated_group == "<NULL>"
+            or "handshake failure" in lower or "alert" in lower):
+        return {'group': group, 'status': 'unsupported'}
+
+    last = next((ln for ln in reversed(text.strip().splitlines()) if ln.strip()), "no output")
+    return {'group': group, 'status': 'error', 'detail': last[:200]}
+
+
+# Probe a single key-exchange group by forcing it via the openssl CLI. pyOpenSSL
+# does not expose a way to set the group list, so we shell out to the native
+# openssl (which on OpenSSL 3.5+ supports the ML-KEM hybrid groups).
+def probe_group(host, port, group, timeout):
+    exe = shutil.which("openssl")
+    if not exe:
+        return {'group': group, 'status': 'error', 'detail': 'openssl CLI not found on PATH'}
+    cmd = [exe, "s_client", "-groups", group, "-connect", f"{host}:{port}"]
+    if not _is_ip_literal(host):
+        cmd += ["-servername", host]
+    try:
+        proc = subprocess.run(
+            cmd,
+            input="Q\n",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {'group': group, 'status': 'error', 'detail': 'timeout'}
+    except Exception as e:
+        return {'group': group, 'status': 'error', 'detail': repr(e)}
+    return classify_group_output(group, (proc.stdout or "") + (proc.stderr or ""))
+
+
+# Enumerate which key-exchange groups the server accepts and assess PQC posture.
+def probe_kex_groups(host, port, timeout, workers=6):
+    if shutil.which("openssl") is None:
+        return {
+            'error': 'openssl CLI not found on PATH; group probing skipped',
+            'groups': {},
+        }
+
+    candidates = (
+        [(g, 'pqc-hybrid') for g in PQC_HYBRID_GROUPS]
+        + [(g, 'classical') for g in CLASSICAL_GROUPS]
+    )
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {
+            ex.submit(probe_group, host, port, g, timeout): (g, cat)
+            for g, cat in candidates
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            g, cat = futures[fut]
+            res = fut.result()
+            res['category'] = cat
+            results[g] = res
+
+    pqc_supported = sorted(
+        g for g, r in results.items()
+        if r.get('status') == 'supported' and r.get('category') == 'pqc-hybrid'
+    )
+    classical_supported = sorted(
+        g for g, r in results.items()
+        if r.get('status') == 'supported' and r.get('category') == 'classical'
+    )
+    unknown_locally = sorted(
+        g for g, r in results.items() if r.get('status') == 'unknown_locally'
+    )
+
+    return {
+        'groups': results,
+        'pqc_hybrid_supported': pqc_supported,
+        'classical_supported': classical_supported,
+        'pqc_ready': bool(pqc_supported),
+        # Harvest-now-decrypt-later exposure: no post-quantum key exchange offered.
+        'hndl_risk': not pqc_supported,
+        'groups_unknown_locally': unknown_locally,
+    }
+
 # Attempt to reflect the client's available ciphers using pyOpenSSL Context
 def client_cipher_profile():
     ctx = new_context(verify=True)
@@ -683,6 +847,10 @@ def print_pretty(report):
         print('  Protocol:', negotiated.get('tls_version'))
         c = negotiated.get('cipher') or (None, None, None)
         print('  Cipher:', c[0])
+        group = negotiated.get('group')
+        if group is not None:
+            pqc = 'post-quantum' if _is_pqc_group(group) else 'classical'
+            print('  Key exchange:', group, f'({pqc})')
         print('  ALPN:', negotiated.get('alpn'))
         cert = negotiated.get('certificate') or {}
         if cert:
@@ -700,6 +868,23 @@ def print_pretty(report):
     for v, info in versions.items():
         print(f'  {v}:', 'supported' if info.get('supported') else 'not supported', '-', info.get('negotiated_cipher'))
 
+    kex = report.get('server_probe', {}).get('kex_groups') or {}
+    if kex:
+        print('\nPost-quantum key exchange:')
+        if kex.get('error'):
+            print('  (skipped)', kex.get('error'))
+        else:
+            pqc = kex.get('pqc_hybrid_supported') or []
+            classical = kex.get('classical_supported') or []
+            if kex.get('pqc_ready'):
+                print('  PQC-ready: YES - hybrid groups supported:', ', '.join(pqc))
+            else:
+                print('  PQC-ready: NO - harvest-now-decrypt-later risk (no PQC key exchange)')
+            print('  Classical groups supported:', ', '.join(classical) if classical else '(none)')
+            unknown = kex.get('groups_unknown_locally') or []
+            if unknown:
+                print('  Not testable (local openssl lacks these groups):', ', '.join(unknown))
+
     print('\nClient profile:')
     cp = report.get('client_profile', {})
     offered = cp.get('offered_ciphers', [])
@@ -714,6 +899,10 @@ def main():
     ap.add_argument("--pretty", action="store_true", help="Print a human-friendly summary")
     ap.add_argument("--raw-cert", action="store_true", help="Fetch and print the server certificate PEM")
     ap.add_argument("--concurrency", type=int, default=8, help="Concurrency for cipher probing")
+    ap.add_argument("--no-groups", action="store_true",
+                    help="Skip post-quantum key-exchange group probing (requires the openssl CLI)")
+    ap.add_argument("--fail-on-classical-only", action="store_true",
+                    help="Exit non-zero if the server offers no post-quantum key exchange (HNDL risk)")
     args = ap.parse_args()
 
     host, port = parse_target(args.url)
@@ -742,16 +931,25 @@ def main():
     versions = probe_versions(host, port, verify, args.timeout)
     tls12 = probe_tls12_ciphers(host, port, verify, args.timeout, COMMON_TLS12_CIPHERS, workers=args.concurrency)
     tls13 = probe_tls13_ciphers(host, port, verify, args.timeout, COMMON_TLS13_CIPHERS, workers=args.concurrency)
+    kex_groups = None
+    if not args.no_groups:
+        # Each group probe spawns an openssl subprocess; keep concurrency modest
+        # so we don't trip server rate limiting and get spurious resets.
+        kex_groups = probe_kex_groups(host, port, args.timeout, workers=min(args.concurrency, 4))
     client_profile = client_cipher_profile()
+
+    server_probe = {
+        "versions": versions,
+        "tls13_ciphers_sample": tls13,
+        "tls12_ciphers_sample": tls12,
+    }
+    if kex_groups is not None:
+        server_probe["kex_groups"] = kex_groups
 
     report = {
         "target": f"{host}:{port}",
         "negotiated": negotiated,
-        "server_probe": {
-            "versions": versions,
-            "tls13_ciphers_sample": tls13,
-            "tls12_ciphers_sample": tls12,
-        },
+        "server_probe": server_probe,
         "client_profile": {
             "offered_ciphers": client_profile,
             "min_version": "TLSv1.2",
@@ -773,6 +971,10 @@ def main():
     hm = negotiated.get('hostname_match')
     if verify and hm is not None and not hm.get('matched'):
         return 2
+    # Optional audit gate: flag servers with no post-quantum key exchange.
+    if args.fail_on_classical_only and kex_groups and not kex_groups.get('error'):
+        if not kex_groups.get('pqc_ready'):
+            return 3
     return 0
 
 

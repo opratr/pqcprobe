@@ -55,4 +55,10 @@ server support by shelling out to the native `openssl s_client -groups <group>`
 (OpenSSL 3.5.x supports all ML-KEM hybrids). Flag any server offering only
 classical key exchange as an HNDL risk.
 
-**Status.** Accepted; to be implemented on the next (PQC) branch.
+**Status.** Implemented on `feature/pqc-group-probing`. Notes from
+implementation: openssl only prints the `Negotiated TLS1.3 group:` line for
+some groups, so handshake success is detected via a real negotiated cipher and
+the forced group is recorded as the one used. Groups the local openssl does not
+recognize are reported as `unknown_locally` (not `unsupported`). Added
+`--fail-on-classical-only` (exit 3) for audit pipelines and `--no-groups` to
+skip probing when the openssl CLI is unavailable.

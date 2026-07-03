@@ -85,6 +85,49 @@ class TestTlsProbeBasic(unittest.TestCase):
         cert = self._cert(subject='CN=example.com,O=Example')
         self.assertTrue(tlsprobe.match_hostname(cert, 'example.com')['matched'])
 
+    def test_is_pqc_group(self):
+        self.assertTrue(tlsprobe._is_pqc_group('X25519MLKEM768'))
+        self.assertTrue(tlsprobe._is_pqc_group('SecP256r1MLKEM768'))
+        self.assertTrue(tlsprobe._is_pqc_group('X25519Kyber768Draft00'))
+        self.assertFalse(tlsprobe._is_pqc_group('x25519'))
+        self.assertFalse(tlsprobe._is_pqc_group('secp384r1'))
+        self.assertFalse(tlsprobe._is_pqc_group(None))
+
+    def test_classify_group_supported(self):
+        out = ("depth=2 ...\n"
+               "Negotiated TLS1.3 group: X25519MLKEM768\n"
+               "New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384\n")
+        res = tlsprobe.classify_group_output('X25519MLKEM768', out)
+        self.assertEqual(res['status'], 'supported')
+        self.assertEqual(res['negotiated'], 'X25519MLKEM768')
+
+    def test_classify_group_supported_classical_no_group_line(self):
+        # Classical groups often produce no "Negotiated TLS1.3 group:" line;
+        # a real negotiated cipher is the success signal.
+        out = ("New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384\n"
+               "No ALPN negotiated\n"
+               "DONE\n")
+        res = tlsprobe.classify_group_output('x25519', out)
+        self.assertEqual(res['status'], 'supported')
+        self.assertEqual(res['negotiated'], 'x25519')
+
+    def test_classify_group_unsupported(self):
+        out = ("...ssl/tls alert handshake failure...\n"
+               "Negotiated TLS1.3 group: <NULL>\n"
+               "New, (NONE), Cipher is (NONE)\n")
+        res = tlsprobe.classify_group_output('ffdhe8192', out)
+        self.assertEqual(res['status'], 'unsupported')
+
+    def test_classify_group_unknown_locally(self):
+        out = "Call to SSL_CONF_cmd(-groups, X25519MLKEM768) failed\n"
+        res = tlsprobe.classify_group_output('X25519MLKEM768', out)
+        self.assertEqual(res['status'], 'unknown_locally')
+
+    def test_classify_group_error(self):
+        out = "connect: Connection refused\nconnect:errno=61\n"
+        res = tlsprobe.classify_group_output('x25519', out)
+        self.assertEqual(res['status'], 'error')
+
 if __name__ == '__main__':
     unittest.main()
 
