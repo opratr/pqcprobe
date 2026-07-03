@@ -1,6 +1,6 @@
 # Decision Log
 
-A running record of notable decisions for tlsprobe — the *why* behind choices
+A running record of notable decisions for pqcprobe — the *why* behind choices
 that the code and commit history don't make obvious on their own. Newest entries
 at the bottom. Each entry: context, the decision, and its status.
 
@@ -8,7 +8,7 @@ at the bottom. Each entry: context, the decision, and its status.
 
 ## 0001 — Purpose: post-quantum readiness auditing (2026-07-03)
 
-**Context.** tlsprobe is used to audit our own systems in preparation for
+**Context.** The tool is used to audit our own systems in preparation for
 post-quantum cryptography risk, specifically "harvest-now, decrypt-later"
 (HNDL) exposure.
 
@@ -62,3 +62,25 @@ the forced group is recorded as the one used. Groups the local openssl does not
 recognize are reported as `unknown_locally` (not `unsupported`). Added
 `--fail-on-classical-only` (exit 3) for audit pipelines and `--no-groups` to
 skip probing when the openssl CLI is unavailable.
+
+---
+
+## 0007 — Project name: pqcprobe (2026-07-03)
+
+**Context.** Before publishing a public GitHub repo we checked the working names
+for conflicts. `tlsprobe` collides with an archived C tool
+(github.com/marcobellaccini/tlsprobe) and sits near `tls_prober` / `tlsprober`;
+`TLS-Audit`/`tlsaudit` collides with an active, feature-similar Go tool
+(github.com/adedayo/tlsaudit). Both original names are generic and neither
+signals the post-quantum focus that differentiates this tool.
+
+**Decision.** Rename the project and CLI to **pqcprobe** ("PQC probe"). It is
+unused on PyPI and GitHub and elsewhere on the web, reads clearly, and escapes
+the crowded generic TLS-scanner namespace. Renamed the module
+(`tlsprobe.py` -> `pqcprobe.py`), test file, and all references.
+
+**Follow-up.** The local working directory is still `TLS-Audit`; name the public
+GitHub repo `pqcprobe` at creation for consistency. The PyPI name `pqcprobe` is
+available if we later publish.
+
+**Status.** Accepted.

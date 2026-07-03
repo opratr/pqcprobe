@@ -1,6 +1,6 @@
-# tlsprobe
+# pqcprobe
 
-A small command-line TLS probing utility that uses pyOpenSSL to inspect an HTTPS server's TLS configuration.
+A small command-line TLS probing utility that uses pyOpenSSL to inspect an HTTPS server's TLS configuration, with a focus on post-quantum readiness.
 
 Features:
 - Reports negotiated TLS version, cipher, ALPN and certificate summary
@@ -36,14 +36,14 @@ python3 -m pip install -r requirements.txt
 2. Run the probe:
 
 ```bash
-python3 tlsprobe.py https://example.com --pretty
-python3 tlsprobe.py example.com:443 --json
-python3 tlsprobe.py example.com:443 --raw-cert
+python3 pqcprobe.py https://example.com --pretty
+python3 pqcprobe.py example.com:443 --json
+python3 pqcprobe.py example.com:443 --raw-cert
 
 # Post-quantum audit: fail (exit 3) if the server offers no PQC key exchange
-python3 tlsprobe.py https://example.com --fail-on-classical-only
+python3 pqcprobe.py https://example.com --fail-on-classical-only
 # Skip group probing entirely (e.g. when the openssl CLI is unavailable)
-python3 tlsprobe.py https://example.com --no-groups
+python3 pqcprobe.py https://example.com --no-groups
 ```
 
 Post-quantum key-exchange probing:

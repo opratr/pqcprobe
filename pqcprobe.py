@@ -1,4 +1,4 @@
-# python
+"""pqcprobe — probe an HTTPS server's TLS configuration and post-quantum posture."""
 import argparse
 import ipaddress
 import json
@@ -838,7 +838,7 @@ def client_cipher_profile():
 
 # Small helper to pretty-print the report
 def print_pretty(report):
-    print('TLS probe report for', report.get('target'))
+    print('pqcprobe report for', report.get('target'))
     negotiated = report.get('negotiated') or {}
     print('\nNegotiated TLS session:')
     if 'error' in negotiated:
