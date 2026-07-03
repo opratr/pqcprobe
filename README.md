@@ -11,8 +11,9 @@ Features:
 - Human-friendly summary (--pretty) or JSON output (--json)
 
 Requirements:
-- Python 3.8+
+- Python 3.9+
 - pyOpenSSL, cryptography (see `requirements.txt`)
+- OpenSSL 3.x recommended (3.5+ for post-quantum group support)
 
 Quick start:
 

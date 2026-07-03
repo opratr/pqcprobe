@@ -3,6 +3,7 @@ import argparse
 import json
 import socket
 import select
+import sys
 import time
 import concurrent.futures
 from urllib.parse import urlparse
@@ -59,7 +60,9 @@ def parse_target(url_or_hostport: str):
         end = s.find(']')
         if end == -1:
             raise ValueError("Invalid IPv6 address format")
-        host = s[: end + 1]
+        # Return the address without brackets so it is usable directly with
+        # socket.create_connection(); getaddrinfo does not accept the bracketed form.
+        host = s[1:end]
         rest = s[end + 1:]
         if rest.startswith(":"):
             try:
@@ -133,11 +136,11 @@ def restrict_context_to_version(ctx, version_label: str):
     try:
         if hasattr(ctx, 'set_min_proto_version') and hasattr(ctx, 'set_max_proto_version'):
             if version_label == 'TLSv1.3':
-                ctx.set_min_proto_version(SSL._lib.TLS1_3_VERSION)  # may not be portable; will fallback
-                ctx.set_max_proto_version(SSL._lib.TLS1_3_VERSION)
+                ctx.set_min_proto_version(SSL.TLS1_3_VERSION)
+                ctx.set_max_proto_version(SSL.TLS1_3_VERSION)
             elif version_label == 'TLSv1.2':
-                ctx.set_min_proto_version(SSL._lib.TLS1_2_VERSION)
-                ctx.set_max_proto_version(SSL._lib.TLS1_2_VERSION)
+                ctx.set_min_proto_version(SSL.TLS1_2_VERSION)
+                ctx.set_max_proto_version(SSL.TLS1_2_VERSION)
             return
     except Exception:
         # ignore and fall back to options
@@ -265,9 +268,6 @@ def connect_once(host, port, ctx, timeout):
     except Exception:
         alpn = None
 
-    # Compression - pyOpenSSL does not expose compression API; set to None
-    compression = None
-
     # Certificate
     cert = None
     try:
@@ -277,17 +277,9 @@ def connect_once(host, port, ctx, timeout):
     except Exception:
         cert = None
 
-    # OCSP stapling
-    ocsp = None
-    try:
-        if hasattr(conn, 'get_ocsp_response'):
-            st = conn.get_ocsp_response()
-            if st:
-                ocsp = True
-            else:
-                ocsp = False
-    except Exception:
-        ocsp = None
+    # Hostname verification: OpenSSL's chain validation does not check that the
+    # certificate actually identifies the host we asked for, so we do it here.
+    hostname_match = match_hostname(cert, host) if cert else None
 
     # Close
     try:
@@ -308,9 +300,8 @@ def connect_once(host, port, ctx, timeout):
         'tls_version': tls_version,
         'cipher': cipher,
         'alpn': alpn,
-        'compression': compression,
         'certificate': cert,
-        'ocsp_stapled': ocsp,
+        'hostname_match': hostname_match,
     }
 
 # New helper: fetch the server certificate PEM (raw) without parsing into dict
@@ -456,6 +447,84 @@ def summarize_cert_x509(x509_obj):
             'version': None,
             'sigalg': None,
         }
+
+# Check whether a certificate identifies the host we connected to.
+# OpenSSL validates the chain but not the identity, so this closes that gap.
+def match_hostname(cert, hostname):
+    if not cert or not hostname:
+        return None
+
+    # Normalize: drop IPv6 brackets and lowercase for DNS comparison.
+    host = hostname.strip()
+    if host.startswith('[') and host.endswith(']'):
+        host = host[1:-1]
+
+    sans = cert.get('subject_alt_names') or {}
+    dns_names = sans.get('dns') or []
+    ip_names = sans.get('ip') or []
+
+    # If the target is an IP literal, match against IP SANs only.
+    try:
+        import ipaddress
+        target_ip = ipaddress.ip_address(host)
+    except ValueError:
+        target_ip = None
+
+    if target_ip is not None:
+        matched = any(_ip_equal(ip, target_ip) for ip in ip_names)
+        return {'matched': matched, 'target': host, 'checked_against': ip_names}
+
+    host_l = host.rstrip('.').lower()
+    checked = list(dns_names)
+    matched = any(_dns_match(pattern, host_l) for pattern in dns_names)
+
+    # Legacy fallback: some certs still rely on the subject CN when no SAN is present.
+    if not matched and not dns_names:
+        cn = _subject_cn(cert.get('subject'))
+        if cn:
+            checked.append(cn)
+            matched = _dns_match(cn, host_l)
+
+    return {'matched': matched, 'target': host_l, 'checked_against': checked}
+
+
+def _ip_equal(san_ip, target_ip):
+    import ipaddress
+    try:
+        return ipaddress.ip_address(str(san_ip)) == target_ip
+    except ValueError:
+        return False
+
+
+def _dns_match(pattern, host):
+    if not pattern:
+        return False
+    pattern = pattern.rstrip('.').lower()
+    if '*' not in pattern:
+        return pattern == host
+    # Wildcards are only valid in the leftmost label and match exactly one label.
+    p_labels = pattern.split('.')
+    h_labels = host.split('.')
+    if len(p_labels) != len(h_labels) or len(p_labels) < 2:
+        return False
+    if '*' not in p_labels[0]:
+        return False
+    if p_labels[1:] != h_labels[1:]:
+        return False
+    prefix, _, suffix = p_labels[0].partition('*')
+    return h_labels[0].startswith(prefix) and h_labels[0].endswith(suffix)
+
+
+def _subject_cn(subject):
+    if not subject:
+        return None
+    # subject is an RFC4514 / comma-joined string such as "CN=example.com,O=..."
+    for part in subject.split(','):
+        part = part.strip()
+        if part.upper().startswith('CN='):
+            return part[3:].strip()
+    return None
+
 
 # Helper to parse pyOpenSSL ASN1 time strings
 def _parse_asn1_time(s: str):
@@ -621,6 +690,10 @@ def print_pretty(report):
             print('    Subject:', cert.get('subject'))
             print('    Issuer :', cert.get('issuer'))
             print('    Not After:', cert.get('not_after'))
+        hm = negotiated.get('hostname_match')
+        if hm is not None:
+            status = 'OK' if hm.get('matched') else 'MISMATCH'
+            print('  Hostname match:', status, '- checked against', hm.get('checked_against'))
 
     print('\nServer probe summary:')
     versions = report.get('server_probe', {}).get('versions', {})
@@ -693,6 +766,15 @@ def main():
     if not args.pretty and not args.json:
         print(json.dumps(report, indent=2))
 
+    # Non-zero exit so the tool is usable in scripts/CI: fail on a broken
+    # handshake, or on a hostname mismatch when certificate verification is on.
+    if 'error' in negotiated:
+        return 1
+    hm = negotiated.get('hostname_match')
+    if verify and hm is not None and not hm.get('matched'):
+        return 2
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

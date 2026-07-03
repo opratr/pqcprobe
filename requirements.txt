@@ -1,4 +1,4 @@
-pyOpenSSL==25.3.0
-cryptography==46.0.2
-# These versions were the ones used when testing locally; adjust if you have a different OpenSSL build.
-
+pyOpenSSL==26.3.0
+cryptography==49.0.0
+# Both require Python 3.9+. Pinned to the versions verified against OpenSSL 3.5.x;
+# adjust if your OpenSSL build differs.
