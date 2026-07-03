@@ -26,6 +26,28 @@ python3 -m unittest discover -v tests
 The unit tests are fully offline (target parsing, hostname matching, and
 openssl-output classification), so they run without network access.
 
+## Linting and security scanning
+
+The same checks run in CI (see the badges in the README). Run them locally:
+
+```bash
+ruff check .                                             # lint
+ruff format .                                            # optional: auto-format
+bandit -r pqcprobe.py -c pyproject.toml --severity-level medium  # SAST
+pip-audit -r requirements.txt                            # dependency CVEs
+```
+
+Optionally install the git hooks so lint/hygiene checks run on each commit:
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```
+
+Tool configuration lives in `pyproject.toml`. CI enforces `ruff check` (lint);
+code formatting via `ruff format` is encouraged but not yet applied repo-wide,
+so it is not gated. CodeQL and Dependabot run on GitHub.
+
 ## Workflow
 
 - Work on a feature branch; do not commit directly to `main`.

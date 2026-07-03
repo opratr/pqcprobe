@@ -115,3 +115,40 @@ PyPI. It previously had no license file, contributor docs, or packaging.
 
 **Status.** Accepted; build validated locally (`python -m build` + `twine
 check` pass, wheel installs and the `pqcprobe` command runs). Not yet uploaded.
+
+---
+
+## 0009 — Linting and security scanning (2026-07-03)
+
+**Context.** The project had no linting or static/security analysis — the only
+automated gate was the unit tests. For an OSS security tool that shells out to
+`openssl` and parses untrusted network data, that is a gap.
+
+**Decisions.**
+- **Ruff** for linting (rules E/F/W/I/UP), configured in `pyproject.toml` and
+  enforced in CI via `ruff check`. `E501` (line length) is left to `ruff format`,
+  which is *not* gated — the code is not yet reformatted repo-wide, and a full
+  reformat was deliberately avoided to keep diffs reviewable. Import-ordering
+  autofixes were applied.
+- **Bandit** for Python SAST, gated in CI at **medium+** severity. The current
+  code produces only low-severity findings: `B404` (subprocess import) and ~25
+  `B110` (try/except/pass). These are accepted as known/architectural — the
+  subprocess call is core functionality (annotated with a safety rationale and
+  `# noqa: S603`), and the broad excepts are pre-existing tech debt already
+  noted in the original review (candidate for a later cleanup). Gating at
+  medium+ keeps CI honest without failing on these.
+- **pip-audit** scans runtime dependencies (`requirements.txt`) for CVEs in CI.
+- **CodeQL** (`github/codeql-action@v4`, `security-and-quality` queries) runs on
+  push/PR and weekly.
+- **Dependabot** for the `pip` and `github-actions` ecosystems (weekly), which
+  also keeps our "use current versions" preference on autopilot.
+- **pre-commit** config for local Ruff + hygiene hooks (opt-in, not CI-gating).
+- README shows status badges for Tests, Lint & Security, and CodeQL.
+
+**Follow-ups.**
+- Replace the `OWNER` placeholder in the README badge URLs when the repo exists.
+- Optional future work: reduce the `B110` broad-except count and then consider
+  applying `ruff format` repo-wide and gating it.
+
+**Status.** Accepted; all checks pass locally (ruff clean, bandit medium+ clean,
+pip-audit clean, 21 tests pass).

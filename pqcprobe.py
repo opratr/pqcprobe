@@ -2,18 +2,18 @@
 __version__ = "0.1.0"
 
 import argparse
+import concurrent.futures
 import ipaddress
 import json
 import re
+import select
 import shutil
 import socket
-import select
 import subprocess
 import sys
 import time
-import concurrent.futures
-from urllib.parse import urlparse
 from datetime import datetime
+from urllib.parse import urlparse
 
 from OpenSSL import SSL
 
@@ -756,7 +756,10 @@ def probe_group(host, port, group, timeout):
     if not _is_ip_literal(host):
         cmd += ["-servername", host]
     try:
-        proc = subprocess.run(
+        # Safe subprocess use: the executable is resolved via shutil.which, the
+        # arguments are passed as a list (no shell interpretation), and none of
+        # host/port/group is interpolated into a shell string.
+        proc = subprocess.run(  # noqa: S603
             cmd,
             input="Q\n",
             capture_output=True,

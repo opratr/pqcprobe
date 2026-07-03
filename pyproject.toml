@@ -44,7 +44,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build", "twine"]
+dev = ["build", "twine", "ruff", "bandit", "pip-audit", "pre-commit"]
 
 [project.scripts]
 pqcprobe = "pqcprobe:main"
@@ -70,3 +70,24 @@ include = [
     "LICENSE",
     "requirements.txt",
 ]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+# Linting is enforced in CI. Formatting (`ruff format`) is available for
+# contributors but not yet applied to the whole file, so it is not gated;
+# line length (E501) is therefore left to the formatter rather than the linter.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade
+]
+ignore = ["E501"]  # line length handled by `ruff format`, not gated here
+
+[tool.bandit]
+# Test code intentionally contains sample data, not runnable security concerns.
+exclude_dirs = ["tests", ".venv"]
