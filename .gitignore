@@ -11,6 +11,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Build artifacts
+build/
+dist/
+*.egg
+
 # IDE
 .idea/
 .vscode/

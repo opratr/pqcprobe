@@ -1,4 +1,6 @@
 """pqcprobe — probe an HTTPS server's TLS configuration and post-quantum posture."""
+__version__ = "0.1.0"
+
 import argparse
 import ipaddress
 import json

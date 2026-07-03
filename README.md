@@ -20,31 +20,39 @@ Features:
 
 Requirements:
 - Python 3.9+
-- pyOpenSSL, cryptography (see `requirements.txt`)
-- OpenSSL 3.x recommended (3.5+ for post-quantum group support)
+- pyOpenSSL, cryptography (installed automatically)
+- OpenSSL 3.x recommended (3.5+ for post-quantum group support). On macOS the
+  system `openssl` is LibreSSL and cannot test the ML-KEM hybrid groups; install
+  OpenSSL 3.5+ (e.g. via Homebrew) for full functionality.
 
-Quick start:
+## Install
 
-1. Create a virtualenv and install dependencies:
+```bash
+pip install pqcprobe
+```
+
+This installs a `pqcprobe` command. To run from a source checkout instead:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
 ```
 
-2. Run the probe:
+## Usage
 
 ```bash
-python3 pqcprobe.py https://example.com --pretty
-python3 pqcprobe.py example.com:443 --json
-python3 pqcprobe.py example.com:443 --raw-cert
+pqcprobe https://example.com --pretty
+pqcprobe example.com:443 --json
+pqcprobe example.com:443 --raw-cert
 
 # Post-quantum audit: fail (exit 3) if the server offers no PQC key exchange
-python3 pqcprobe.py https://example.com --fail-on-classical-only
+pqcprobe https://example.com --fail-on-classical-only
 # Skip group probing entirely (e.g. when the openssl CLI is unavailable)
-python3 pqcprobe.py https://example.com --no-groups
+pqcprobe https://example.com --no-groups
 ```
+
+(From a source checkout without installing, use `python3 pqcprobe.py ...`.)
 
 Post-quantum key-exchange probing:
 - Enumerating group support forces individual groups via the native `openssl`
@@ -64,6 +72,14 @@ Exit codes:
 Notes:
 - Programmatic overriding of TLS 1.3 ciphersuites requires a recent OpenSSL + pyOpenSSL exposing `set_ciphersuites`.
 - Cipher probing may produce handshake failures for many ciphers — the tool records successes and errors.
+- Only use pqcprobe against systems you own or are authorized to test.
 
-License: MIT (use as you like)
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security
+issues should be reported privately per [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Andre Van Klaveren
 

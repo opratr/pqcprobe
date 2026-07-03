@@ -84,3 +84,34 @@ GitHub repo `pqcprobe` at creation for consistency. The PyPI name `pqcprobe` is
 available if we later publish.
 
 **Status.** Accepted.
+
+---
+
+## 0008 — Open-source and packaging setup (2026-07-03)
+
+**Context.** Preparing the project to accept contributions and be published to
+PyPI. It previously had no license file, contributor docs, or packaging.
+
+**Decisions.**
+- **License:** MIT, © 2026 Andre Van Klaveren (added a real `LICENSE` file to
+  back the README's existing claim).
+- **Governance:** added `CONTRIBUTING.md`, `SECURITY.md` (private disclosure to
+  andre@vanklaverens.com — important for a security tool), `CODE_OF_CONDUCT.md`
+  (Contributor Covenant 2.1), and `CHANGELOG.md` (Keep a Changelog).
+- **Packaging:** `pyproject.toml` with the hatchling backend; version is a
+  single source of truth read from `__version__` in `pqcprobe.py`; kept the flat
+  single-module layout (packaged via `only-include`) rather than moving to
+  `src/`, to minimize churn. Exposes a `pqcprobe` console entry point
+  (`pqcprobe:main`, which already returned an exit code).
+- **Publishing:** GitHub Actions workflow using PyPI Trusted Publishing (OIDC),
+  triggered on a published GitHub Release — no API tokens stored. The actual
+  upload is a human-triggered release, never automated blindly.
+
+**Follow-ups before first publish.**
+- Replace the `OWNER` placeholder in `pyproject.toml` and `CHANGELOG.md` URLs
+  with the real GitHub namespace once the repo exists.
+- Register a PyPI "pending" trusted publisher for project `pqcprobe`
+  (workflow `publish.yml`, environment `pypi`).
+
+**Status.** Accepted; build validated locally (`python -m build` + `twine
+check` pass, wheel installs and the `pqcprobe` command runs). Not yet uploaded.
