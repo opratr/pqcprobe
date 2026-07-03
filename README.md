@@ -3,6 +3,7 @@
 [![Tests](https://github.com/opratr/pqcprobe/actions/workflows/python-tests.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/python-tests.yml)
 [![Lint & Security](https://github.com/opratr/pqcprobe/actions/workflows/lint.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/lint.yml)
 [![CodeQL](https://github.com/opratr/pqcprobe/actions/workflows/codeql.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/codeql.yml)
+[![Python versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small command-line TLS probing utility that uses pyOpenSSL to inspect an HTTPS server's TLS configuration, with a focus on post-quantum readiness.
