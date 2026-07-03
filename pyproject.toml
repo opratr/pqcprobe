@@ -50,10 +50,9 @@ dev = ["build", "twine", "ruff", "bandit", "pip-audit", "pre-commit"]
 pqcprobe = "pqcprobe:main"
 
 [project.urls]
-# TODO: update OWNER once the public GitHub repo exists.
-Homepage = "https://github.com/OWNER/pqcprobe"
-Repository = "https://github.com/OWNER/pqcprobe"
-Issues = "https://github.com/OWNER/pqcprobe/issues"
+Homepage = "https://github.com/opratr/pqcprobe"
+Repository = "https://github.com/opratr/pqcprobe"
+Issues = "https://github.com/opratr/pqcprobe/issues"
 
 [tool.hatch.version]
 path = "pqcprobe.py"

@@ -108,8 +108,8 @@ PyPI. It previously had no license file, contributor docs, or packaging.
   upload is a human-triggered release, never automated blindly.
 
 **Follow-ups before first publish.**
-- Replace the `OWNER` placeholder in `pyproject.toml` and `CHANGELOG.md` URLs
-  with the real GitHub namespace once the repo exists.
+- GitHub namespace is `opratr`; project URLs in `pyproject.toml` and
+  `CHANGELOG.md` are set accordingly.
 - Register a PyPI "pending" trusted publisher for project `pqcprobe`
   (workflow `publish.yml`, environment `pypi`).
 
@@ -146,7 +146,8 @@ automated gate was the unit tests. For an OSS security tool that shells out to
 - README shows status badges for Tests, Lint & Security, and CodeQL.
 
 **Follow-ups.**
-- Replace the `OWNER` placeholder in the README badge URLs when the repo exists.
+- README badge URLs use the `opratr` namespace; they render once the repo is
+  pushed to GitHub.
 - Optional future work: reduce the `B110` broad-except count and then consider
   applying `ruff format` repo-wide and gating it.
 

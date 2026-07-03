@@ -25,5 +25,5 @@ Initial release.
   mismatch, 3 no post-quantum key exchange with `--fail-on-classical-only`).
 - Packaging: installable via pip with a `pqcprobe` console command.
 
-[Unreleased]: https://github.com/OWNER/pqcprobe/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/pqcprobe/releases/tag/v0.1.0
+[Unreleased]: https://github.com/opratr/pqcprobe/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/opratr/pqcprobe/releases/tag/v0.1.0

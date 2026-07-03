@@ -1,9 +1,8 @@
 # pqcprobe
 
-<!-- Replace OWNER with the GitHub namespace once the public repo exists. -->
-[![Tests](https://github.com/OWNER/pqcprobe/actions/workflows/python-tests.yml/badge.svg)](https://github.com/OWNER/pqcprobe/actions/workflows/python-tests.yml)
-[![Lint & Security](https://github.com/OWNER/pqcprobe/actions/workflows/lint.yml/badge.svg)](https://github.com/OWNER/pqcprobe/actions/workflows/lint.yml)
-[![CodeQL](https://github.com/OWNER/pqcprobe/actions/workflows/codeql.yml/badge.svg)](https://github.com/OWNER/pqcprobe/actions/workflows/codeql.yml)
+[![Tests](https://github.com/opratr/pqcprobe/actions/workflows/python-tests.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/python-tests.yml)
+[![Lint & Security](https://github.com/opratr/pqcprobe/actions/workflows/lint.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/lint.yml)
+[![CodeQL](https://github.com/opratr/pqcprobe/actions/workflows/codeql.yml/badge.svg)](https://github.com/opratr/pqcprobe/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small command-line TLS probing utility that uses pyOpenSSL to inspect an HTTPS server's TLS configuration, with a focus on post-quantum readiness.
