@@ -1,0 +1,4 @@
+pyOpenSSL==25.3.0
+cryptography==46.0.2
+# These versions were the ones used when testing locally; adjust if you have a different OpenSSL build.
+
