@@ -1,0 +1,3 @@
+# Default owner for everything in the repo.
+# Automatically requests review from @opratr on pull requests.
+* @opratr
