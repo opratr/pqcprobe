@@ -7,7 +7,7 @@ name = "pqcprobe"
 dynamic = ["version"]
 description = "Probe a server's TLS configuration and post-quantum (ML-KEM) key-exchange readiness"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9.2"  # cryptography 49 excludes Python 3.9.0/3.9.1
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Andre Van Klaveren", email = "andre@vanklaverens.com" }]

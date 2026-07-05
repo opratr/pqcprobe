@@ -153,3 +153,40 @@ automated gate was the unit tests. For an OSS security tool that shells out to
 
 **Status.** Accepted; all checks pass locally (ruff clean, bandit medium+ clean,
 pip-audit clean, 21 tests pass).
+
+---
+
+## 0010 — Hash-pinned runtime dependencies (2026-07-04)
+
+**Context.** For supply-chain integrity we want installs to verify the exact
+artifact, not just the version — protecting against a compromised or substituted
+package on the index.
+
+**Decisions.**
+- Hashes live in a **lockfile**, not in package metadata. `pyproject.toml`
+  keeps *abstract* version constraints (what `pip install pqcprobe` resolves for
+  end users); `requirements.txt` is a fully pinned, hash-locked lockfile of the
+  entire transitive tree (cryptography, cffi, pycparser, pyOpenSSL,
+  typing-extensions).
+- The lockfile is generated from `requirements.in` with
+  `uv pip compile --universal --generate-hashes` — `--universal` embeds
+  environment markers so one file is correct across Python 3.9–3.13 (e.g.
+  `pycparser` 2.23 for <3.10 vs 3.0 for ≥3.10; `typing-extensions` only <3.13).
+- CI's test job installs with `pip install --require-hashes -r requirements.txt`,
+  which fails the build if any artifact's hash does not match (verified locally:
+  a tampered hash produces "THESE PACKAGES DO NOT MATCH THE HASHES"). Tests run
+  without an editable install because `pqcprobe.py` is importable from the repo
+  root; the packaged-install path is validated separately in `publish.yml`.
+- **`requires-python` tightened to `>=3.9.2`**: surfaced during resolution,
+  cryptography 49 excludes Python 3.9.0/3.9.1, so the previous `>=3.9` was
+  inaccurate.
+
+**Notes / limits.**
+- Dev tools (ruff, bandit, etc.) and the build backend (hatchling, fetched in
+  build isolation) are not yet hash-pinned — a smaller residual surface. A dev
+  lockfile is possible future work.
+- Dependabot understands hashed requirements and will regenerate hashes on
+  updates, so this stays compatible with the "keep versions current" policy.
+
+**Status.** Accepted; hash-verified install confirmed in a clean venv, tests
+pass.

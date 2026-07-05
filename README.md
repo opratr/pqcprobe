@@ -25,7 +25,7 @@ Features:
 - Meaningful exit codes for scripting (see below)
 
 Requirements:
-- Python 3.9+
+- Python 3.9.2+
 - pyOpenSSL, cryptography (installed automatically)
 - OpenSSL 3.x recommended (3.5+ for post-quantum group support). On macOS the
   system `openssl` is LibreSSL and cannot test the ML-KEM hybrid groups; install

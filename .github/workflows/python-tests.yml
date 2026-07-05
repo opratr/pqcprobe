@@ -21,10 +21,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package and dependencies
+      - name: Install hash-pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install --require-hashes -r requirements.txt
 
       - name: Run unit tests
+        # pqcprobe.py is importable from the repo root; no install needed.
         run: python -m unittest discover -v tests

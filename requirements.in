@@ -1,0 +1,7 @@
+# Direct runtime dependencies (human-edited source).
+# The pinned, hash-locked lockfile requirements.txt is generated from this with:
+#   uv pip compile --universal --generate-hashes --python-version 3.9.2 \
+#       requirements.in -o requirements.txt
+# (3.9.2 floor: cryptography 49 excludes Python 3.9.0/3.9.1.)
+pyOpenSSL==26.3.0
+cryptography==49.0.0

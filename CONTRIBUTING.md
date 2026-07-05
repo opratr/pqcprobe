@@ -17,6 +17,26 @@ on your PATH, ideally OpenSSL 3.5+ (which ships the ML-KEM hybrid groups).
 On macOS the system `openssl` is LibreSSL and will not recognize those groups;
 install OpenSSL 3.5+ (e.g. via Homebrew) for full functionality.
 
+## Dependency lockfile
+
+Runtime dependencies are hash-pinned in `requirements.txt` for reproducible,
+supply-chain-verified installs. Do not edit that file by hand — it is generated
+from `requirements.in` with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv pip compile --universal --generate-hashes --python-version 3.9.2 \
+    requirements.in -o requirements.txt
+```
+
+Install exactly the pinned set (with hash verification) using:
+
+```bash
+pip install --require-hashes -r requirements.txt
+```
+
+The abstract dependency ranges in `pyproject.toml` are what end users get when
+they `pip install pqcprobe`; the lockfile is for development and CI.
+
 ## Running the tests
 
 ```bash
