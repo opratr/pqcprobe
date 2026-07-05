@@ -1,0 +1,11 @@
+# Development/CI tooling (human-edited source).
+# The pinned, hash-locked lockfile requirements-dev.txt is generated from this with:
+#   uv pip compile --universal --generate-hashes --python-version 3.9.2 \
+#       requirements-dev.in -o requirements-dev.txt
+build       # sdist/wheel builder
+hatchling   # build backend (pinned so `build --no-isolation` is verifiable)
+twine       # package upload / metadata check
+ruff        # linter
+bandit      # SAST
+pip-audit   # dependency vulnerability scan
+pre-commit  # local git hooks

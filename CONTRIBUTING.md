@@ -19,23 +19,32 @@ install OpenSSL 3.5+ (e.g. via Homebrew) for full functionality.
 
 ## Dependency lockfile
 
-Runtime dependencies are hash-pinned in `requirements.txt` for reproducible,
-supply-chain-verified installs. Do not edit that file by hand — it is generated
-from `requirements.in` with [uv](https://docs.astral.sh/uv/):
+Both runtime and dev/CI dependencies are hash-pinned for reproducible,
+supply-chain-verified installs. Do not edit the `.txt` lockfiles by hand — they
+are generated from the `.in` sources with [uv](https://docs.astral.sh/uv/):
 
 ```bash
+# runtime deps -> requirements.txt
 uv pip compile --universal --generate-hashes --python-version 3.9.2 \
     requirements.in -o requirements.txt
+
+# dev/CI tools -> requirements-dev.txt
+uv pip compile --universal --generate-hashes --python-version 3.9.2 \
+    requirements-dev.in -o requirements-dev.txt
 ```
 
-Install exactly the pinned set (with hash verification) using:
+Install exactly the pinned sets (with hash verification) using:
 
 ```bash
-pip install --require-hashes -r requirements.txt
+pip install --require-hashes -r requirements.txt       # runtime
+pip install --require-hashes -r requirements-dev.txt   # dev tools
 ```
 
+The dev lockfile pins the build backend (hatchling), so the release build runs
+`python -m build --no-isolation` — no unpinned build-time fetches.
+
 The abstract dependency ranges in `pyproject.toml` are what end users get when
-they `pip install pqcprobe`; the lockfile is for development and CI.
+they `pip install pqcprobe`; the lockfiles are for development and CI.
 
 ## Running the tests
 

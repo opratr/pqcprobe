@@ -22,8 +22,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install tools
-        run: python -m pip install --upgrade pip ruff bandit pip-audit
+      - name: Install hash-pinned tools
+        run: python -m pip install --require-hashes -r requirements-dev.txt
 
       - name: Ruff (lint)
         run: ruff check .

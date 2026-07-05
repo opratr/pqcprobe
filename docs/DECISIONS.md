@@ -182,11 +182,41 @@ package on the index.
   inaccurate.
 
 **Notes / limits.**
-- Dev tools (ruff, bandit, etc.) and the build backend (hatchling, fetched in
-  build isolation) are not yet hash-pinned — a smaller residual surface. A dev
-  lockfile is possible future work.
+- Dev tools and the build backend were initially unpinned; now addressed in
+  [[0011]].
 - Dependabot understands hashed requirements and will regenerate hashes on
   updates, so this stays compatible with the "keep versions current" policy.
 
 **Status.** Accepted; hash-verified install confirmed in a clean venv, tests
 pass.
+
+---
+
+## 0011 — Hash-pin dev tools and the build backend (2026-07-04)
+
+**Context.** Extends [[0010]] to close the residual unpinned surface: the CI dev
+tools (ruff, bandit, pip-audit, build, twine, pre-commit) and the build backend
+(hatchling), which `python -m build` otherwise fetches unpinned in an isolated
+environment.
+
+**Decisions.**
+- Added `requirements-dev.in` -> `requirements-dev.txt`, a universal
+  hash-locked lockfile for the dev/CI toolchain (same `uv pip compile` flow as
+  the runtime lockfile).
+- `lint.yml` installs the tools with `--require-hashes -r requirements-dev.txt`
+  instead of an unpinned `pip install`.
+- `publish.yml` installs the same pinned set and runs `python -m build
+  --no-isolation`, so the build uses the hash-pinned hatchling rather than
+  fetching a build backend on the fly.
+- `hatchling` is included in the dev lockfile specifically to make the
+  no-isolation build verifiable.
+
+**Notes.**
+- Universal resolution pins per-Python variants where a tool dropped an older
+  interpreter (e.g. `bandit` 1.8.6 on 3.9 vs 1.9.4 on ≥3.10); CI (3.13) gets the
+  current releases.
+- pre-commit hook repos remain pinned by git `rev` (their native mechanism),
+  which is separate from the pip hash lockfiles.
+
+**Status.** Accepted; verified in a clean venv — pinned tools run (ruff, bandit,
+pip-audit clean) and `build --no-isolation` + `twine check` pass.
