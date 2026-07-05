@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a problem with pqcprobe
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not** use this form for security
+        vulnerabilities — report those privately per the security policy.
+  - type: input
+    id: version
+    attributes:
+      label: pqcprobe version
+      description: "`pip show pqcprobe` or the `__version__` value."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.13.5"
+    validations:
+      required: true
+  - type: input
+    id: openssl
+    attributes:
+      label: OpenSSL version
+      description: "`openssl version` — relevant for post-quantum group probing."
+      placeholder: "OpenSSL 3.5.4"
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      render: shell
+      placeholder: "pqcprobe https://example.com --pretty"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected vs. actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output / error
+      render: shell

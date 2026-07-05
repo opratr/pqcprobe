@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/opratr/pqcprobe/security/policy
+    about: >
+      Please report security vulnerabilities privately per the security policy,
+      not as a public issue.
