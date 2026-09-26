@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Require authenticated TLS 1.3 evidence before reporting hybrid group support.
+- Fail the PQC policy gate with exit 4 when probing is inconclusive, and reject
+  incompatible gate options.
+- Match certificate names from typed X.509 fields and verify every probe path,
+  including raw PEM retrieval.
+
+### Added
+- `--ca-file` to share a private CA bundle across Python and native OpenSSL probes.
+
 ## [0.1.0] - 2026-07-03
 
 Initial release.

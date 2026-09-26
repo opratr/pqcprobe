@@ -15,13 +15,9 @@ import time
 from datetime import datetime
 from urllib.parse import urlparse
 
+from cryptography import x509 as cx509
+from cryptography.x509.oid import NameOID
 from OpenSSL import SSL
-
-# cryptography is used to make parsing X509 extensions easier
-try:
-    from cryptography import x509 as cx509
-except Exception:
-    cx509 = None
 
 COMMON_TLS12_CIPHERS = [
     "ECDHE-ECDSA-CHACHA20-POLY1305",
@@ -114,7 +110,7 @@ def parse_target(url_or_hostport: str):
     return s, 443
 
 # Create a pyOpenSSL context with reasonable defaults
-def new_context(verify: bool, alpn=True):
+def new_context(verify: bool, alpn=True, ca_file=None):
     # Use a flexible method and then disable unwanted protocol versions explicitly
     ctx = SSL.Context(SSL.TLS_METHOD)
 
@@ -129,10 +125,10 @@ def new_context(verify: bool, alpn=True):
 
     if verify:
         ctx.set_verify(SSL.VERIFY_PEER, callback=_verify_cb)
-        try:
+        if ca_file:
+            ctx.load_verify_locations(ca_file)
+        else:
             ctx.set_default_verify_paths()
-        except Exception:
-            pass
     else:
         ctx.set_verify(SSL.VERIFY_NONE)
 
@@ -195,7 +191,7 @@ def restrict_context_to_version(ctx, version_label: str):
         pass
 
 # Perform a single TLS handshake and gather info using pyOpenSSL
-def connect_once(host, port, ctx, timeout):
+def connect_once(host, port, ctx, timeout, include_pem=False):
     addr = (host, port)
     sock = socket.create_connection(addr, timeout=timeout)
     # Wrap the socket in a pyOpenSSL Connection
@@ -297,10 +293,14 @@ def connect_once(host, port, ctx, timeout):
 
     # Certificate
     cert = None
+    pem = None
     try:
         peer = conn.get_peer_certificate()
         if peer:
             cert = summarize_cert_x509(peer)
+            if include_pem:
+                from OpenSSL import crypto
+                pem = crypto.dump_certificate(crypto.FILETYPE_PEM, peer).decode()
     except Exception:
         cert = None
 
@@ -341,64 +341,26 @@ def connect_once(host, port, ctx, timeout):
         'group': group,
         'certificate': cert,
         'hostname_match': hostname_match,
+        **({'pem': pem} if include_pem else {}),
     }
 
-# New helper: fetch the server certificate PEM (raw) without parsing into dict
-def fetch_peer_cert_pem(host, port, verify, timeout):
-    addr = (host, port)
-    ctx = new_context(verify=verify)
-    sock = socket.create_connection(addr, timeout=timeout)
-    conn = SSL.Connection(ctx, sock)
-    try:
-        try:
-            conn.set_tlsext_host_name(host.encode())
-        except Exception:
-            pass
-        conn.set_connect_state()
-        # handshake with WANT read/write support
-        deadline = time.time() + float(timeout or 5.0)
-        while True:
-            try:
-                conn.do_handshake()
-                break
-            except SSL.WantReadError:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    raise Exception('handshake failed: timeout waiting for read')
-                r, w, _ = select.select([sock], [], [], remaining)
-                if not r:
-                    raise Exception('handshake failed: timeout waiting for read')
-                continue
-            except SSL.WantWriteError:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    raise Exception('handshake failed: timeout waiting for write')
-                r, w, _ = select.select([], [sock], [], remaining)
-                if not w:
-                    raise Exception('handshake failed: timeout waiting for write')
-                continue
-        peer = conn.get_peer_certificate()
-        if peer is not None:
-            try:
-                from OpenSSL import crypto as _crypto
-                pem = _crypto.dump_certificate(_crypto.FILETYPE_PEM, peer)
-                return pem.decode()
-            except Exception:
-                return None
-        return None
-    finally:
-        try:
-            conn.shutdown()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
-        try:
-            sock.close()
-        except Exception:
-            pass
+class HostnameVerificationError(Exception):
+    pass
+
+
+def checked_connect_once(host, port, ctx, timeout, verify, include_pem=False):
+    info = connect_once(host, port, ctx, timeout, include_pem=include_pem)
+    if verify and not (info.get('hostname_match') or {}).get('matched'):
+        raise HostnameVerificationError(f'certificate does not identify {host}')
+    return info
+
+
+def fetch_peer_cert_pem(host, port, verify, timeout, ca_file=None):
+    ctx = new_context(verify=verify, ca_file=ca_file)
+    info = checked_connect_once(host, port, ctx, timeout, verify, include_pem=True)
+    if not info.get('pem'):
+        raise ValueError('server did not present a certificate')
+    return info['pem']
 
 # Convert pyOpenSSL.crypto.X509 to a normalized dict using cryptography where possible
 def summarize_cert_x509(x509_obj):
@@ -414,20 +376,16 @@ def summarize_cert_x509(x509_obj):
         not_after = not_after_dt.isoformat() + 'Z' if not_after_dt is not None else None
         san_dns = []
         san_ip = []
+        san_present = False
         try:
-            if cx509 is not None:
-                san_ext = cert.extensions.get_extension_for_class(cx509.SubjectAlternativeName)
-                sans = san_ext.value
-                try:
-                    san_dns = sans.get_values_for_type(cx509.DNSName)
-                except Exception:
-                    san_dns = []
-                try:
-                    san_ip = [str(ip) for ip in sans.get_values_for_type(cx509.IPAddress)]
-                except Exception:
-                    san_ip = []
-        except Exception:
+            sans = cert.extensions.get_extension_for_class(cx509.SubjectAlternativeName).value
+            san_present = True
+            san_dns = sans.get_values_for_type(cx509.DNSName)
+            san_ip = [str(ip) for ip in sans.get_values_for_type(cx509.IPAddress)]
+        except cx509.ExtensionNotFound:
             pass
+        # Any other SAN parsing failure invalidates identity verification.
+        common_names = [attr.value for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)]
 
         # normalize version to a JSON-serializable value
         version_obj = getattr(cert, 'version', None)
@@ -449,6 +407,8 @@ def summarize_cert_x509(x509_obj):
             'not_before': not_before,
             'not_after': not_after,
             'subject_alt_names': {'dns': san_dns, 'ip': san_ip},
+            'san_present': san_present,
+            'common_names': common_names,
             'serial_number': hex(cert.serial_number),
             'version': version_val,
             'sigalg': sigalg,
@@ -482,6 +442,9 @@ def summarize_cert_x509(x509_obj):
             'not_before': not_before,
             'not_after': not_after,
             'subject_alt_names': {'dns': [], 'ip': []},
+            'san_present': None,
+            'common_names': [],
+            'identity_error': 'certificate identity could not be parsed',
             'serial_number': hex(x509_obj.get_serial_number()) if hasattr(x509_obj, 'get_serial_number') else None,
             'version': None,
             'sigalg': None,
@@ -492,6 +455,8 @@ def summarize_cert_x509(x509_obj):
 def match_hostname(cert, hostname):
     if not cert or not hostname:
         return None
+    if cert.get('identity_error') or cert.get('san_present') is None:
+        return {'matched': False, 'target': hostname, 'checked_against': []}
 
     # Normalize: drop IPv6 brackets and lowercase for DNS comparison.
     host = hostname.strip()
@@ -517,12 +482,10 @@ def match_hostname(cert, hostname):
     checked = list(dns_names)
     matched = any(_dns_match(pattern, host_l) for pattern in dns_names)
 
-    # Legacy fallback: some certs still rely on the subject CN when no SAN is present.
-    if not matched and not dns_names:
-        cn = _subject_cn(cert.get('subject'))
-        if cn:
-            checked.append(cn)
-            matched = _dns_match(cn, host_l)
+    # Legacy CN fallback uses typed X.509 attributes only when SAN is absent.
+    if not matched and not cert['san_present']:
+        checked.extend(cert.get('common_names') or [])
+        matched = any(_dns_match(cn, host_l) for cn in cert.get('common_names') or [])
 
     return {'matched': matched, 'target': host_l, 'checked_against': checked}
 
@@ -541,28 +504,16 @@ def _dns_match(pattern, host):
     pattern = pattern.rstrip('.').lower()
     if '*' not in pattern:
         return pattern == host
-    # Wildcards are only valid in the leftmost label and match exactly one label.
+    # Only a complete leftmost wildcard label may match exactly one DNS label.
     p_labels = pattern.split('.')
     h_labels = host.split('.')
     if len(p_labels) != len(h_labels) or len(p_labels) < 2:
         return False
-    if '*' not in p_labels[0]:
+    if p_labels[0] != '*':
         return False
     if p_labels[1:] != h_labels[1:]:
         return False
-    prefix, _, suffix = p_labels[0].partition('*')
-    return h_labels[0].startswith(prefix) and h_labels[0].endswith(suffix)
-
-
-def _subject_cn(subject):
-    if not subject:
-        return None
-    # subject is an RFC4514 / comma-joined string such as "CN=example.com,O=..."
-    for part in subject.split(','):
-        part = part.strip()
-        if part.upper().startswith('CN='):
-            return part[3:].strip()
-    return None
+    return bool(h_labels[0])
 
 
 # Helper to parse pyOpenSSL ASN1 time strings
@@ -581,13 +532,13 @@ def _parse_asn1_time(s: str):
         return s
 
 # Probe which TLS versions are supported by trying to restrict to each version
-def probe_versions(host, port, verify, timeout):
+def probe_versions(host, port, verify, timeout, ca_file=None):
     results = {}
     for vlabel in ("TLSv1.3", "TLSv1.2"):
-        ctx = new_context(verify=verify)
+        ctx = new_context(verify=verify, ca_file=ca_file)
         restrict_context_to_version(ctx, vlabel)
         try:
-            info = connect_once(host, port, ctx, timeout)
+            info = checked_connect_once(host, port, ctx, timeout, verify)
             results[vlabel] = {
                 'supported': True,
                 'negotiated_cipher': info.get('cipher'),
@@ -598,12 +549,12 @@ def probe_versions(host, port, verify, timeout):
     return results
 
 # Probe a sample of TLS 1.2 ciphers by setting the cipher list on the context
-def probe_tls12_ciphers(host, port, verify, timeout, ciphers, workers=8):
+def probe_tls12_ciphers(host, port, verify, timeout, ciphers, workers=8, ca_file=None):
     supported = []
     unsupported = []
 
     def _worker(c):
-        ctx = new_context(verify=verify)
+        ctx = new_context(verify=verify, ca_file=ca_file)
         restrict_context_to_version(ctx, 'TLSv1.2')
         setter = getattr(ctx, 'set_cipher_list', None)
         if not callable(setter):
@@ -616,7 +567,7 @@ def probe_tls12_ciphers(host, port, verify, timeout, ciphers, workers=8):
         except Exception as e:
             return {'cipher': c, 'error': repr(e)}
         try:
-            info = connect_once(host, port, ctx, timeout)
+            info = checked_connect_once(host, port, ctx, timeout, verify)
             name, _, bits = info['cipher'] or (None, None, None)
             return {'cipher': name, 'bits': bits, 'ok': True}
         except Exception as e:
@@ -635,9 +586,9 @@ def probe_tls12_ciphers(host, port, verify, timeout, ciphers, workers=8):
     return {'supported': dedupe_by_name(supported), 'skipped_or_unsupported': unsupported}
 
 # Probe TLS1.3 ciphersuites (requires pyOpenSSL/OpenSSL supporting set_ciphersuites)
-def probe_tls13_ciphers(host, port, verify, timeout, ciphersuites, workers=8):
+def probe_tls13_ciphers(host, port, verify, timeout, ciphersuites, workers=8, ca_file=None):
     # Quick capability test
-    cap_ctx = new_context(verify=verify)
+    cap_ctx = new_context(verify=verify, ca_file=ca_file)
     set_cs = getattr(cap_ctx, 'set_ciphersuites', None)
     if not callable(set_cs):
         return {
@@ -650,7 +601,7 @@ def probe_tls13_ciphers(host, port, verify, timeout, ciphersuites, workers=8):
     unsupported = []
 
     def _worker(cs):
-        ctx = new_context(verify=verify)
+        ctx = new_context(verify=verify, ca_file=ca_file)
         restrict_context_to_version(ctx, 'TLSv1.3')
         setter = getattr(ctx, 'set_ciphersuites', None)
         if not callable(setter):
@@ -660,7 +611,7 @@ def probe_tls13_ciphers(host, port, verify, timeout, ciphersuites, workers=8):
         except Exception as e:
             return {'cipher': cs, 'error': repr(e)}
         try:
-            info = connect_once(host, port, ctx, timeout)
+            info = checked_connect_once(host, port, ctx, timeout, verify)
             name, _, bits = info['cipher'] or (None, None, None)
             return {'cipher': name, 'bits': bits, 'ok': True}
         except Exception as e:
@@ -710,7 +661,7 @@ def _is_pqc_group(group):
 # Interpret the combined stdout/stderr of `openssl s_client -groups <group>`.
 # Kept separate from the subprocess call so it can be unit tested with captured
 # sample output.
-def classify_group_output(group, output):
+def classify_group_output(group, output, returncode=0):
     text = output or ""
     lower = text.lower()
     # openssl rejects the group before connecting when the local build doesn't
@@ -722,23 +673,31 @@ def classify_group_output(group, output):
             'detail': 'local openssl does not recognize this group',
         }
 
-    # The reliable success signal across openssl versions is a real negotiated
-    # cipher. The "Negotiated TLS1.3 group:" line is only printed for some
-    # builds/groups, so it confirms the group name when present but cannot be
-    # relied on as the sole indicator (classical groups often omit it).
-    cipher_m = re.search(r"Cipher is (\S+)", text)
+    if ("certificate verify failed" in lower or "verification error" in lower
+            or "verify error:" in lower):
+        return {'group': group, 'status': 'auth_error',
+                'detail': 'certificate verification failed'}
+
+    # Require a successful TLS 1.3 handshake and a real cipher. Some OpenSSL
+    # builds omit the group line, so the single advertised group supplies the
+    # group identity when that line is absent.
+    cipher_m = re.search(r"^New, [^,]+, Cipher is (\S+)", text, re.MULTILINE)
     negotiated_cipher = cipher_m.group(1) if cipher_m else None
-    group_m = re.search(r"Negotiated TLS1\.3 group:\s*(\S+)", text)
+    group_m = re.search(r"^Negotiated TLS1\.3 group:\s*(\S+)", text, re.MULTILINE)
     negotiated_group = group_m.group(1) if group_m else None
 
-    handshake_ok = bool(negotiated_cipher) and negotiated_cipher != "(NONE)"
-    if handshake_ok and negotiated_group != "<NULL>":
-        # We forced a single group, so a successful handshake used it.
+    tls13 = bool(re.search(r"^New, TLSv1\.3, Cipher is", text, re.MULTILINE))
+    handshake_ok = tls13 and bool(negotiated_cipher) and negotiated_cipher != "(NONE)"
+    if handshake_ok and returncode == 0 and negotiated_group != "<NULL>":
+        if negotiated_group and negotiated_group.lower() != group.lower():
+            return {'group': group, 'status': 'error',
+                    'detail': f'negotiated a different group: {negotiated_group}'}
+        # A successful TLS 1.3 handshake with one advertised group uses it.
         return {'group': group, 'status': 'supported',
                 'negotiated': negotiated_group or group}
 
     if (negotiated_cipher == "(NONE)" or negotiated_group == "<NULL>"
-            or "handshake failure" in lower or "alert" in lower):
+            or "handshake failure" in lower or "alert protocol version" in lower):
         return {'group': group, 'status': 'unsupported'}
 
     last = next((ln for ln in reversed(text.strip().splitlines()) if ln.strip()), "no output")
@@ -748,13 +707,20 @@ def classify_group_output(group, output):
 # Probe a single key-exchange group by forcing it via the openssl CLI. pyOpenSSL
 # does not expose a way to set the group list, so we shell out to the native
 # openssl (which on OpenSSL 3.5+ supports the ML-KEM hybrid groups).
-def probe_group(host, port, group, timeout):
+def probe_group(host, port, group, timeout, verify=True, ca_file=None):
     exe = shutil.which("openssl")
     if not exe:
         return {'group': group, 'status': 'error', 'detail': 'openssl CLI not found on PATH'}
-    cmd = [exe, "s_client", "-groups", group, "-connect", f"{host}:{port}"]
+    connect_host = f'[{host}]' if _is_ip_literal(host) and ':' in host else host
+    cmd = [exe, "s_client", "-tls1_3", "-showcerts", "-groups", group,
+           "-connect", f"{connect_host}:{port}"]
     if not _is_ip_literal(host):
         cmd += ["-servername", host]
+    if verify:
+        cmd.append('-verify_return_error')
+        cmd += ['-verify_ip' if _is_ip_literal(host) else '-verify_hostname', host]
+        if ca_file:
+            cmd += ['-CAfile', ca_file]
     try:
         # Safe subprocess use: the executable is resolved via shutil.which, the
         # arguments are passed as a list (no shell interpretation), and none of
@@ -770,32 +736,55 @@ def probe_group(host, port, group, timeout):
         return {'group': group, 'status': 'error', 'detail': 'timeout'}
     except Exception as e:
         return {'group': group, 'status': 'error', 'detail': repr(e)}
-    return classify_group_output(group, (proc.stdout or "") + (proc.stderr or ""))
+    output = (proc.stdout or "") + (proc.stderr or "")
+    result = classify_group_output(group, output, proc.returncode)
+    if verify and result['status'] == 'supported':
+        # Native chain validation is supplemented with the same strict identity
+        # rules used for Python probes (including complete-label wildcards).
+        pem = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+                        output, re.DOTALL)
+        if not pem:
+            return {'group': group, 'status': 'error',
+                    'detail': 'verified handshake omitted the peer certificate'}
+        try:
+            from OpenSSL import crypto
+            peer = crypto.load_certificate(crypto.FILETYPE_PEM, pem.group(0))
+            identity = match_hostname(summarize_cert_x509(peer), host)
+        except Exception:
+            return {'group': group, 'status': 'error',
+                    'detail': 'could not inspect the peer certificate identity'}
+        if not identity or not identity['matched']:
+            return {'group': group, 'status': 'auth_error',
+                    'detail': 'certificate does not identify target'}
+    return result
 
 
 # Enumerate which key-exchange groups the server accepts and assess PQC posture.
-def probe_kex_groups(host, port, timeout, workers=6):
+def probe_kex_groups(host, port, timeout, workers=6, verify=True, ca_file=None,
+                     negotiated=None):
     if shutil.which("openssl") is None:
-        return {
-            'error': 'openssl CLI not found on PATH; group probing skipped',
-            'groups': {},
-        }
+        results = {}
+        error = 'openssl CLI not found on PATH; group probing skipped'
+    else:
+        results = None
+        error = None
 
     candidates = (
         [(g, 'pqc-hybrid') for g in PQC_HYBRID_GROUPS]
         + [(g, 'classical') for g in CLASSICAL_GROUPS]
     )
-    results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(probe_group, host, port, g, timeout): (g, cat)
-            for g, cat in candidates
-        }
-        for fut in concurrent.futures.as_completed(futures):
-            g, cat = futures[fut]
-            res = fut.result()
-            res['category'] = cat
-            results[g] = res
+    if results is None:
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(probe_group, host, port, g, timeout, verify, ca_file): (g, cat)
+                for g, cat in candidates
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                g, cat = futures[fut]
+                res = fut.result()
+                res['category'] = cat
+                results[g] = res
 
     pqc_supported = sorted(
         g for g, r in results.items()
@@ -809,14 +798,30 @@ def probe_kex_groups(host, port, timeout, workers=6):
         g for g, r in results.items() if r.get('status') == 'unknown_locally'
     )
 
+    negotiated_pqc = (
+        negotiated and negotiated.get('tls_version') == 'TLSv1.3'
+        and _is_pqc_group(negotiated.get('group'))
+        and (not verify or (negotiated.get('hostname_match') or {}).get('matched'))
+    )
+    if pqc_supported or negotiated_pqc:
+        assessment = 'supported'
+    elif (len(results) == len(candidates)
+          and all(results[g]['status'] == 'unsupported' for g in PQC_HYBRID_GROUPS)):
+        assessment = 'unsupported'
+    else:
+        assessment = 'indeterminate'
+
     return {
         'groups': results,
         'pqc_hybrid_supported': pqc_supported,
         'classical_supported': classical_supported,
-        'pqc_ready': bool(pqc_supported),
-        # Harvest-now-decrypt-later exposure: no post-quantum key exchange offered.
-        'hndl_risk': not pqc_supported,
+        'pqc_assessment': assessment,
+        'pqc_ready': (assessment == 'supported' if assessment != 'indeterminate' else None),
+        'hndl_risk': (assessment == 'unsupported' if assessment != 'indeterminate' else None),
+        'authenticated': verify,
+        'negotiated_pqc_group': negotiated.get('group') if negotiated_pqc else None,
         'groups_unknown_locally': unknown_locally,
+        **({'error': error} if error else {}),
     }
 
 # Attempt to reflect the client's available ciphers using pyOpenSSL Context
@@ -877,18 +882,21 @@ def print_pretty(report):
     if kex:
         print('\nPost-quantum key exchange:')
         if kex.get('error'):
-            print('  (skipped)', kex.get('error'))
-        else:
-            pqc = kex.get('pqc_hybrid_supported') or []
-            classical = kex.get('classical_supported') or []
-            if kex.get('pqc_ready'):
-                print('  PQC-ready: YES - hybrid groups supported:', ', '.join(pqc))
-            else:
-                print('  PQC-ready: NO - harvest-now-decrypt-later risk (no PQC key exchange)')
-            print('  Classical groups supported:', ', '.join(classical) if classical else '(none)')
-            unknown = kex.get('groups_unknown_locally') or []
-            if unknown:
-                print('  Not testable (local openssl lacks these groups):', ', '.join(unknown))
+            print('  Group enumeration:', kex.get('error'))
+        assessment = kex.get('pqc_assessment')
+        print('  PQC support:', assessment.upper())
+        if not kex.get('authenticated'):
+            print('  Certificate identity: NOT VERIFIED')
+        pqc = kex.get('pqc_hybrid_supported') or []
+        if pqc:
+            print('  Hybrid groups supported:', ', '.join(pqc))
+        if kex.get('negotiated_pqc_group'):
+            print('  Hybrid group in initial session:', kex['negotiated_pqc_group'])
+        classical = kex.get('classical_supported') or []
+        print('  Classical groups supported:', ', '.join(classical) if classical else '(none)')
+        unknown = kex.get('groups_unknown_locally') or []
+        if unknown:
+            print('  Not testable (local openssl lacks these groups):', ', '.join(unknown))
 
     print('\nClient profile:')
     cp = report.get('client_profile', {})
@@ -900,6 +908,7 @@ def main():
     ap.add_argument("url", help="Target, e.g. https://example.com or host[:port]")
     ap.add_argument("--timeout", type=float, default=5.0, help="Connect timeout in seconds")
     ap.add_argument("--no-verify", action="store_true", help="Do not verify server certificates")
+    ap.add_argument("--ca-file", help="PEM CA bundle for Python and OpenSSL verification")
     ap.add_argument("--json", action="store_true", help="Output JSON only")
     ap.add_argument("--pretty", action="store_true", help="Print a human-friendly summary")
     ap.add_argument("--raw-cert", action="store_true", help="Fetch and print the server certificate PEM")
@@ -909,6 +918,12 @@ def main():
     ap.add_argument("--fail-on-classical-only", action="store_true",
                     help="Exit non-zero if the server offers no post-quantum key exchange (HNDL risk)")
     args = ap.parse_args()
+    if args.fail_on_classical_only and args.no_groups:
+        ap.error('--fail-on-classical-only requires group probing')
+    if args.fail_on_classical_only and args.no_verify:
+        ap.error('--fail-on-classical-only requires certificate verification')
+    if args.fail_on_classical_only and args.raw_cert:
+        ap.error('--fail-on-classical-only cannot be used with --raw-cert')
 
     host, port = parse_target(args.url)
     verify = not args.no_verify
@@ -916,31 +931,36 @@ def main():
     # If requested, fetch raw PEM and exit
     if args.raw_cert:
         try:
-            pem = fetch_peer_cert_pem(host, port, verify, args.timeout)
-            if pem:
-                print(pem)
-            else:
-                print('# no peer certificate (or failed to fetch)')
-            return
+            pem = fetch_peer_cert_pem(host, port, verify, args.timeout, args.ca_file)
+            print(pem, end='')
+            return 0
+        except HostnameVerificationError as e:
+            print(f'error fetching PEM: {e}', file=sys.stderr)
+            return 2
         except Exception as e:
-            print('# error fetching PEM:', e)
-            return
+            print(f'error fetching PEM: {e}', file=sys.stderr)
+            return 1
 
     # Negotiated session (default settings)
     try:
-        ctx = new_context(verify=verify)
-        negotiated = connect_once(host, port, ctx, args.timeout)
+        ctx = new_context(verify=verify, ca_file=args.ca_file)
+        negotiated = checked_connect_once(host, port, ctx, args.timeout, verify)
+    except HostnameVerificationError as e:
+        negotiated = {"error": str(e), "error_type": "hostname", "peer": f"{host}:{port}"}
     except Exception as e:
         negotiated = {"error": str(e), "peer": f"{host}:{port}"}
 
-    versions = probe_versions(host, port, verify, args.timeout)
-    tls12 = probe_tls12_ciphers(host, port, verify, args.timeout, COMMON_TLS12_CIPHERS, workers=args.concurrency)
-    tls13 = probe_tls13_ciphers(host, port, verify, args.timeout, COMMON_TLS13_CIPHERS, workers=args.concurrency)
+    versions = probe_versions(host, port, verify, args.timeout, args.ca_file)
+    tls12 = probe_tls12_ciphers(host, port, verify, args.timeout, COMMON_TLS12_CIPHERS,
+                                workers=args.concurrency, ca_file=args.ca_file)
+    tls13 = probe_tls13_ciphers(host, port, verify, args.timeout, COMMON_TLS13_CIPHERS,
+                                workers=args.concurrency, ca_file=args.ca_file)
     kex_groups = None
     if not args.no_groups:
         # Each group probe spawns an openssl subprocess; keep concurrency modest
         # so we don't trip server rate limiting and get spurious resets.
-        kex_groups = probe_kex_groups(host, port, args.timeout, workers=min(args.concurrency, 4))
+        kex_groups = probe_kex_groups(host, port, args.timeout, workers=min(args.concurrency, 4),
+                                      verify=verify, ca_file=args.ca_file, negotiated=negotiated)
     client_profile = client_cipher_profile()
 
     server_probe = {
@@ -972,14 +992,14 @@ def main():
     # Non-zero exit so the tool is usable in scripts/CI: fail on a broken
     # handshake, or on a hostname mismatch when certificate verification is on.
     if 'error' in negotiated:
-        return 1
-    hm = negotiated.get('hostname_match')
-    if verify and hm is not None and not hm.get('matched'):
-        return 2
+        return 2 if negotiated.get('error_type') == 'hostname' else 1
     # Optional audit gate: flag servers with no post-quantum key exchange.
-    if args.fail_on_classical_only and kex_groups and not kex_groups.get('error'):
-        if not kex_groups.get('pqc_ready'):
+    if args.fail_on_classical_only:
+        assessment = (kex_groups or {}).get('pqc_assessment')
+        if assessment == 'unsupported':
             return 3
+        if assessment != 'supported':
+            return 4
     return 0
 
 

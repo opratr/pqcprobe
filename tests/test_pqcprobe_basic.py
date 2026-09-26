@@ -52,10 +52,13 @@ class TestPqcProbeBasic(unittest.TestCase):
         self.assertEqual(out[0]['cipher'], 'A')
         self.assertEqual(out[1]['cipher'], 'B')
 
-    def _cert(self, dns=None, ip=None, subject=None):
+    def _cert(self, dns=None, ip=None, common_names=None, san_present=None):
+        if san_present is None:
+            san_present = bool(dns or ip)
         return {
-            'subject': subject,
             'subject_alt_names': {'dns': dns or [], 'ip': ip or []},
+            'san_present': san_present,
+            'common_names': common_names or [],
         }
 
     def test_hostname_match_exact(self):
@@ -84,8 +87,24 @@ class TestPqcProbeBasic(unittest.TestCase):
 
     def test_hostname_match_cn_fallback(self):
         # No SAN present: fall back to the subject CN.
-        cert = self._cert(subject='CN=example.com,O=Example')
+        cert = self._cert(common_names=['example.com'])
         self.assertTrue(pqcprobe.match_hostname(cert, 'example.com')['matched'])
+
+    def test_hostname_does_not_parse_subject_display_string(self):
+        cert = self._cert()
+        cert['subject'] = r'O=Example\,CN=victim.example'
+        self.assertFalse(pqcprobe.match_hostname(cert, 'victim.example')['matched'])
+
+    def test_partial_wildcard_and_san_parse_failure_rejected(self):
+        self.assertFalse(pqcprobe.match_hostname(
+            self._cert(dns=['f*.example.com']), 'foo.example.com')['matched'])
+        cert = self._cert(common_names=['example.com'], san_present=None)
+        cert['identity_error'] = 'bad SAN'
+        self.assertFalse(pqcprobe.match_hostname(cert, 'example.com')['matched'])
+
+    def test_cn_not_used_when_san_present(self):
+        cert = self._cert(common_names=['example.com'], san_present=True)
+        self.assertFalse(pqcprobe.match_hostname(cert, 'example.com')['matched'])
 
     def test_is_pqc_group(self):
         self.assertTrue(pqcprobe._is_pqc_group('X25519MLKEM768'))
@@ -130,6 +149,15 @@ class TestPqcProbeBasic(unittest.TestCase):
         res = pqcprobe.classify_group_output('x25519', out)
         self.assertEqual(res['status'], 'error')
 
+    def test_tls12_cipher_does_not_prove_hybrid_group(self):
+        out = 'New, TLSv1.2, Cipher is AES128-GCM-SHA256\n'
+        res = pqcprobe.classify_group_output('X25519MLKEM768', out)
+        self.assertNotEqual(res['status'], 'supported')
+
+    def test_group_authentication_failure_is_not_unsupported(self):
+        out = 'verify error:num=18:self-signed certificate\nNew, (NONE), Cipher is (NONE)\n'
+        res = pqcprobe.classify_group_output('X25519MLKEM768', out, returncode=1)
+        self.assertEqual(res['status'], 'auth_error')
+
 if __name__ == '__main__':
     unittest.main()
-
