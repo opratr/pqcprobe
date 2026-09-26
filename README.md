@@ -13,9 +13,8 @@ Features:
 - Reports negotiated TLS version, cipher, ALPN and certificate summary
 - Reports the negotiated key-exchange group and flags whether it is
   post-quantum (e.g. `X25519MLKEM768`) or classical
-- Assesses post-quantum posture: enumerates which key-exchange groups the
-  server accepts and flags "harvest-now, decrypt-later" (HNDL) risk when no
-  post-quantum key exchange is offered
+- Assesses post-quantum posture from verified TLS 1.3 group probes and the
+  negotiated session; reports an indeterminate result when testing is incomplete
 - Verifies the certificate matches the requested hostname (SAN/CN, wildcard
   and IP aware)
 - Probes server support for TLS 1.3 and TLS 1.2
@@ -52,6 +51,7 @@ python3 -m pip install -e .
 pqcprobe https://example.com --pretty
 pqcprobe example.com:443 --json
 pqcprobe example.com:443 --raw-cert
+pqcprobe example.com:443 --ca-file /path/to/ca-bundle.pem
 
 # Post-quantum audit: fail (exit 3) if the server offers no PQC key exchange
 pqcprobe https://example.com --fail-on-classical-only
@@ -66,15 +66,30 @@ Post-quantum key-exchange probing:
   CLI, since pyOpenSSL does not expose a way to set the group list. OpenSSL 3.5+
   is required for the ML-KEM hybrid groups (`X25519MLKEM768`, etc.). Groups the
   local openssl doesn't recognize are reported as "not testable" rather than
-  "unsupported" (relevant on macOS, whose system openssl is LibreSSL).
+  "unsupported" (relevant on macOS, whose system openssl is LibreSSL). Each
+  probe requires TLS 1.3 and, by default, verifies the certificate and target
+  name. Use `--ca-file` for private PKI so Python and the native CLI use the
+  same CA bundle.
 - Reading the *negotiated* group uses pyOpenSSL's `Connection.get_group_name()`
   and needs no external tools.
+- `pqc_ready` and `hndl_risk` are `null` when the assessment is indeterminate.
+  Offered hybrid support does not prove that every client negotiates it or that
+  historical sessions were protected. Results from `--no-verify` are labeled
+  unauthenticated; the policy gate requires verification.
+- A certificate without a SAN can still use its actual subject CN for legacy
+  compatibility. Certificates with a SAN do not use CN fallback; wildcards must
+  occupy the complete leftmost DNS label.
 
 Exit codes:
 - `0` success
 - `1` handshake failed
 - `2` certificate hostname mismatch (when verifying)
 - `3` no post-quantum key exchange offered (only with `--fail-on-classical-only`)
+- `4` post-quantum assessment indeterminate (only with `--fail-on-classical-only`)
+
+`--fail-on-classical-only` cannot be combined with `--no-groups`, `--no-verify`,
+or `--raw-cert`. `--raw-cert` writes only PEM to stdout on success; errors go to
+stderr with a nonzero exit code.
 
 Notes:
 - Programmatic overriding of TLS 1.3 ciphersuites requires a recent OpenSSL + pyOpenSSL exposing `set_ciphersuites`.
@@ -89,4 +104,3 @@ issues should be reported privately per [SECURITY.md](SECURITY.md).
 ## License
 
 [MIT](LICENSE) © Andre Van Klaveren
-
