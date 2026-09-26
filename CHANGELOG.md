@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
 ### Fixed
 - Require authenticated TLS 1.3 evidence before reporting hybrid group support.
 - Fail the PQC policy gate with exit 4 when probing is inconclusive, and reject
@@ -35,5 +37,6 @@ Initial release.
   mismatch, 3 no post-quantum key exchange with `--fail-on-classical-only`).
 - Packaging: installable via pip with a `pqcprobe` console command.
 
-[Unreleased]: https://github.com/opratr/pqcprobe/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/opratr/pqcprobe/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/opratr/pqcprobe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/opratr/pqcprobe/releases/tag/v0.1.0

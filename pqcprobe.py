@@ -1,5 +1,5 @@
 """pqcprobe — probe an HTTPS server's TLS configuration and post-quantum posture."""
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import argparse
 import concurrent.futures
